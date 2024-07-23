@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -57,8 +58,7 @@ namespace MQTT
         internal void Parse_FixedHeader(byte[] data)
         {
             this.pointer = 0;
-            this.fixedHeader_raw = data;
-            this.Type = (Frametype)(data[this.pointer++] >> 4);
+            this.Type = (Frametype)(data[this.pointer] >> 4);
             byte flags = (byte)(data[this.pointer++] & 0x0F);
 
             this.remainingLength = 0;
@@ -71,8 +71,9 @@ namespace MQTT
                 multiplier *= 128;
             } while ((encodedByte & 128) != 0);
 
-            this.fixedHeader_raw = new byte[pointer];
-            Array.Copy(data,0,this.fixedHeader_raw,0,pointer);
+            int headerLength = this.pointer; 
+            this.fixedHeader_raw = new byte[headerLength];
+            Array.Copy(data, 0, this.fixedHeader_raw, 0, headerLength);
         }
 
         /// <summary>
@@ -86,6 +87,16 @@ namespace MQTT
         /// </summary>
         /// <param name="data">Gesamten gelesenen Daten</param>
         internal abstract void Parse_Payload(byte[] data);
+
+        internal virtual byte[] GetBytes()
+        {
+            List<byte> Frame = new List<byte>();
+            Frame.AddRange(this.fixedHeader_raw);
+            Frame.AddRange(this.variableHeader_raw);
+            Frame.AddRange(this.payload_raw);
+
+            return Frame.ToArray();
+        }
 
         /// <summary>
         /// Überprüft, ob das angegebene Bit in einem Byte gesetzt ist.
@@ -149,9 +160,9 @@ namespace MQTT
                 data[this.pointer++],                
                 data[this.pointer++]                
             };
-            int protocolNameLength = this.GetFieldValue(protocolNameLengthBytes[0], protocolNameLengthBytes[1]);
+            int protocolNameLength = (protocolNameLengthBytes[0] << 8) | protocolNameLengthBytes[1];
             byte[] protocolNameBytes = new byte[protocolNameLength];
-            Array.Copy(data,startindex,protocolNameBytes,0,protocolNameLength);
+            Array.Copy(data,this.pointer,protocolNameBytes,0,protocolNameLength);
             this.ProtocolName = UTF8Encoding.UTF8.GetString(protocolNameBytes);
             this.pointer += protocolNameLength;
 
@@ -163,6 +174,7 @@ namespace MQTT
             this.QoSLevel = (QualityOfService)((connectFlag & 0xC) >> 2);
             this.WillFlag = this.IsBitset(connectFlag, 2);
             this.CleanSessionFlag = this.IsBitset(connectFlag, 1);
+            
             byte[] KeepAliveBytes = new byte[]
             {
             data[this.pointer++],
@@ -198,6 +210,7 @@ namespace MQTT
             // Contains the Will Topic and the Will Message
             if (this.WillFlag == true)
             {
+                Debug.WriteLine("= Extracting Will Topic =");
                 byte[] WillTopicLengthBytes = new byte[]
                 {
                     data[this.pointer++],
@@ -209,6 +222,7 @@ namespace MQTT
                 this.WillTopic = UTF8Encoding.UTF8.GetString(WillTopicBytes);
                 this.pointer += WillTopicLength;
 
+                Debug.WriteLine("= Extracting Will Message =");
                 byte[] WillMessageLengthBytes = new byte[]
                 {
                     data[this.pointer++],
@@ -261,6 +275,9 @@ namespace MQTT
 
     public class CONNACK : Frame
     {
+        public bool SessionPresentFlag { get; set; }
+        public int ConnectReturnCode { get; set; }
+        
         public override void Parse(byte[] data)
         {
             return;
@@ -275,13 +292,28 @@ namespace MQTT
         {
             return;
         }
+
+        internal override byte[] GetBytes()
+        {
+            List<byte> Frame = new List<byte>
+            {
+                (byte)((byte)this.Type << 4),
+                (byte)this.remainingLength,
+                (byte)((this.SessionPresentFlag)?1:0),
+                (byte)this.ConnectReturnCode
+            };
+
+            return Frame.ToArray();
+        }
     }
 
     public class PUB : Frame
     {
         public override void Parse(byte[] data)
         {
-            throw new NotImplementedException();
+            this.Parse_FixedHeader(data);
+            //this.Parse_VariableHeader(data);
+            //this.Parse_Payload(data);
         }
 
         internal override void Parse_VariableHeader(byte[] data)
@@ -311,6 +343,11 @@ namespace MQTT
         {
             throw new NotImplementedException();
         }
+
+        internal override byte[] GetBytes()
+        {
+            throw new NotImplementedException();
+        }
     }
 
     public class PUBREC : Frame
@@ -326,6 +363,11 @@ namespace MQTT
         }
 
         internal override void Parse_Payload(byte[] data)
+        {
+            throw new NotImplementedException();
+        }
+
+        internal override byte[] GetBytes()
         {
             throw new NotImplementedException();
         }
@@ -347,6 +389,11 @@ namespace MQTT
         {
             throw new NotImplementedException();
         }
+
+        internal override byte[] GetBytes()
+        {
+            throw new NotImplementedException();
+        }
     }
 
     public class PUBCOMP : Frame
@@ -362,6 +409,11 @@ namespace MQTT
         }
 
         internal override void Parse_Payload(byte[] data)
+        {
+            throw new NotImplementedException();
+        }
+
+        internal override byte[] GetBytes()
         {
             throw new NotImplementedException();
         }
@@ -401,6 +453,11 @@ namespace MQTT
         {
             return;
         }
+
+        internal override byte[] GetBytes()
+        {
+            throw new NotImplementedException();
+        }
     }
 
     public class UNSUB : Frame
@@ -436,6 +493,11 @@ namespace MQTT
         internal override void Parse_Payload(byte[] data)
         {
             return;
+        }
+
+        internal override byte[] GetBytes()
+        {
+            throw new NotImplementedException();
         }
     }
 
@@ -473,13 +535,18 @@ namespace MQTT
         {
             return;
         }
+
+        internal override byte[] GetBytes()
+        {
+            throw new NotImplementedException();
+        }
     }
 
     public class DISCONN : Frame
     {
         public override void Parse(byte[] data)
         {
-            throw new NotImplementedException();
+            this.Parse_FixedHeader(data);
         }
 
         internal override void Parse_VariableHeader(byte[] data)
@@ -491,31 +558,10 @@ namespace MQTT
         {
             throw new NotImplementedException();
         }
-    }
 
-    public enum Frametype
-    {
-        UNKNOWN = -1,
-        CONN = 1,
-        CONNACK = 2,
-        PUB = 3,
-        PUBACK = 4,
-        PUBREC = 5,
-        PUBREL = 6,
-        PUBCOMP = 7,
-        SUB = 8,
-        SUBACK = 9,
-        UNSUB = 10,
-        UNSUBACK = 11,
-        PINGREQ = 12,
-        PINGRESP = 13,
-        DISCONN = 14,
-    }
-
-    public enum QualityOfService
-    {
-        AtMostOnce = 0,
-        AtLeastOnce = 1,
-        ExactlyOnce = 2
+        internal override byte[] GetBytes()
+        {
+            throw new NotImplementedException();
+        }
     }
 }

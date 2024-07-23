@@ -19,7 +19,7 @@ namespace MQTT
 
         private static Frametype GetFrametype(byte[] data) 
         {
-            return Frametype.UNKNOWN;
+            return (Frametype)(data[0] >> 4);
         }
 
         private static Factory GetFactory(Frametype type)

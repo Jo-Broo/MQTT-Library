@@ -25,6 +25,17 @@ namespace MQTT
         {
             return new CONNACK();
         }
+
+        public Frame CreateFrameByReturnCode(ConnectReturnCode returnCode, bool SessionPresent)
+        {
+            CONNACK Frame = new CONNACK();
+            Frame.Type = Frametype.CONNACK;
+            Frame.remainingLength = 2;
+            Frame.SessionPresentFlag = SessionPresent;
+            Frame.ConnectReturnCode = (int)returnCode;
+
+            return Frame;
+        }
     }
 
     public class PUBFactory : Factory
