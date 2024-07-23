@@ -8,6 +8,118 @@ namespace MQTT
 {
     public abstract class Factory
     {
-        public abstract Frame ResolveFrame();
+        public abstract Frame CreateFrame();
+    }
+
+    public class CONNFactory : Factory 
+    {
+        public override Frame CreateFrame()
+        {
+            return new CONN();
+        }
+    }
+
+    public class CONNACKFactory : Factory
+    {
+        public override Frame CreateFrame()
+        {
+            return new CONNACK();
+        }
+    }
+
+    public class PUBFactory : Factory
+    {
+        public override Frame CreateFrame()
+        {
+            return new PUB();
+        }
+    }
+
+    public class PUBACKFactory : Factory
+    {
+        public override Frame CreateFrame()
+        {
+            return new PUBACK();
+        }
+    }
+
+    public class PUBRECFactory : Factory
+    {
+        public override Frame CreateFrame()
+        {
+            return new PUBREC();
+        }
+    }
+
+    public class PUBRELFactory : Factory
+    {
+        public override Frame CreateFrame()
+        {
+            return new PUBREL();
+        }
+    }
+
+    public class PUBCOMPFactory : Factory
+    {
+        public override Frame CreateFrame()
+        {
+            return new PUBCOMP();
+        }
+    }
+
+    public class SUBFactory : Factory
+    {
+        public override Frame CreateFrame()
+        {
+            return new SUB();
+        }
+    }
+
+    public class SUBACKFactory : Factory
+    {
+        public override Frame CreateFrame()
+        {
+            return new SUBACK();
+        }
+    }
+
+    public class UNSUBFactory : Factory
+    {
+        public override Frame CreateFrame()
+        {
+            return new UNSUB();
+        }
+    }
+
+    public class UNSUBACKFactory : Factory
+    {
+        public override Frame CreateFrame()
+        {
+            return new UNSUBACK();
+        }
+    }
+
+    public class PINGREQFactory : Factory
+    {
+        public override Frame CreateFrame()
+        {
+            return new PINGREQ();
+        }
+    }
+
+    public class PINGRESFactory : Factory
+    {
+        public override Frame CreateFrame()
+        {
+            return new PINGRES();
+        }
+    }
+
+    public class DISCONNFactory : Factory
+    {
+        public override Frame CreateFrame()
+        {
+            return new DISCONN();
+        }
     }
 }

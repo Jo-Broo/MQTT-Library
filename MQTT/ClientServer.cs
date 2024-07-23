@@ -26,12 +26,20 @@ namespace MQTT
 
         public async Task Start()
         {
-            this._socket.Listen(10);
-
-            while (true)
+            try
             {
-                Socket client = await this._socket.AcceptAsync();
-                _ = HandleClient(client);
+                this._socket.Listen(10);
+
+                while (true)
+                {
+                    Socket client = await this._socket.AcceptAsync();
+                    _ = HandleClient(client);
+                    this._running = true;
+                }
+            }
+            catch (Exception)
+            {
+                this._running = false;
             }
         }
 
@@ -42,11 +50,7 @@ namespace MQTT
             int bytesRead = await client.ReceiveAsync(new ArraySegment<byte>(buffer), SocketFlags.None);
             if (bytesRead > 0) 
             {
-                foreach (byte b in buffer)
-                {
-                    // Hier muss jetzt die Packet erkennung hin,
-                    // ich bau das alles bis ich wieder eine Verindung hinbekomme und dann schau ich weiter
-                }
+                System.Diagnostics.Debug.WriteLine(FrameResolver.Resolve(buffer).Type.ToString());
             }
         }
     }

@@ -44,6 +44,7 @@
     <Compile Include="ClientServer.cs" />
     <Compile Include="Factory.cs" />
     <Compile Include="Frame.cs" />
+    <Compile Include="FrameResolver.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
