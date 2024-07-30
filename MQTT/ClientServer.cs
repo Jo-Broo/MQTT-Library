@@ -7,6 +7,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Log;
 
 namespace MQTT
 {
@@ -18,66 +19,93 @@ namespace MQTT
 
         private Dictionary<string, Socket> _ConnectedClients;
 
+        private Dictionary<string, List<string>> Topics;
+
         private readonly object _lock = new object();
+
+        private readonly string LogPath = @"C:\Logs";
+        private readonly string LogFilename = "Broker.log";
+        private Logger Logger;
 
         public Broker(IPAddress ipAddress, int Port)
         {
             this._socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             this._socket.Bind(new IPEndPoint(ipAddress, Port));
             this._ConnectedClients = new Dictionary<string, Socket>();
+            this.Logger = new Logger(this.LogPath, this.LogFilename, ConsoleOutput: true);
         }
 
         public async Task Start()
         {
-            Console.Write("Starting Broker...");
+            this.Logger.CreateLogEntry("Starting Broker",Logger.LogLevel.Debug,true);
             if (_running)
             {
+                this.Logger.CreateLogEntry("Broker already running", Logger.LogLevel.Error, true);
                 throw new InvalidOperationException("Broker already running");
             }
-            
+
+            this.Logger.CreateLogEntry("Setting the running Status of the Broker", Logger.LogLevel.Debug, true, true);
             this._running = true;
             
             try
             {
+                this.Logger.CreateLogEntry("Start Listening", Logger.LogLevel.Info, true);
                 this._socket.Listen(10);
-                Console.WriteLine("started");
+
+                this.Logger.CreateLogEntry("Broker started", Logger.LogLevel.Info, true);
                 while (this._running)
                 {
                     Socket client = await this._socket.AcceptAsync();
                     Task.Run(() =>{ HandleClient(client); });
                 }
             }
-            catch (ObjectDisposedException) when (!this._running)
+            catch (ObjectDisposedException odex) when (!this._running)
             {
-
+                this.Logger.CreateLogEntry(odex.Message + " [Start()]", Logger.LogLevel.Error, true);
             }
             catch (Exception ex)
             {
-                Debug.WriteLine(ex.Message);
+                this.Logger.CreateLogEntry(ex.Message + " [Start()]", Logger.LogLevel.Error, true);
             }
             finally
             {
+                this.Logger.CreateLogEntry("Stopping the Broker", Logger.LogLevel.Info, true);
                 this.Stop();
             }
         }
 
         private async Task HandleClient(Socket ClientSocket)
         {
+            this.Logger.CreateLogEntry("Start Handeling a Connection", Logger.LogLevel.Info, true);
+            // indicates if the Client properly Disconnected
+            bool ClientDisconnected = false;
             try
             {
+                // Contains the ClientIdentifier of this Connection
                 string ClientIdentifier = "";
+                // Buffer for incoming Frames
                 byte[] FrameBuffer = new byte[1024];
+                // Buffer for outgoing Frames
                 byte[] respons;
+                // Number of bytes read
                 int BytesRead;
 
-                while(this._running && (BytesRead = ClientSocket.Receive(FrameBuffer, SocketFlags.None)) > 0)
+                while(this._running == true && ClientSocket.Connected == true)
                 {
+                    BytesRead = ClientSocket.Receive(FrameBuffer, SocketFlags.None);
+
                     if (BytesRead == 0)
                     {
-                        throw new Exception("The Client is Disconnected.");
+                        this.Logger.CreateLogEntry("0 bytes read from the connection", Logger.LogLevel.Warn, true);
+                        
+                        if(ClientIdentifier != "")
+                        {
+                            this.RemoveClient(ClientIdentifier);
+                        }
                     }
+                    this.Logger.CreateLogEntry("A Message was recieved", Logger.LogLevel.Info, true);
 
-                    // Ausgabe der empfangenen Daten
+                    // Temporary Console Output of the recieved Frame
                     Console.WriteLine("Received data:");
                     for (int i = 0; i < BytesRead; i++)
                     {
@@ -85,28 +113,65 @@ namespace MQTT
                     }
                     Console.WriteLine("");
 
-                    // Verarbeite die empfangenen Daten
+                    // Resolving the Frame and outputting its type
                     var RecievedFrame = FrameResolver.Resolve(FrameBuffer);
-                    Console.WriteLine(RecievedFrame.Type.ToString());
+                    this.Logger.CreateLogEntry($"Messagetype: [{RecievedFrame.Type}]", Logger.LogLevel.Info, true);
 
                     switch (RecievedFrame.Type)
                     {
                         case Frametype.CONN:
+                            this.Logger.CreateLogEntry($"Starting Process for CONNECTION-Packets", Logger.LogLevel.Debug, true);
                             CONNACK ResponseFrame = null;
                             var ResponseFrameFactory = new CONNACKFactory();
-                            
-                            if (this._ConnectedClients.ContainsKey(((CONN)RecievedFrame).ClientIdentifier))
+                            ClientIdentifier = ((CONN)RecievedFrame).ClientIdentifier;
+
+                            //if (this.AddClient(((CONN)RecievedFrame).ClientIdentifier, ClientSocket) == false)
+                            //{
+                            //    // Client was not added to the Dictionary because there was already a Client with the same ID
+                            //    // 1. Disconnect Client
+                            //    Socket ConnectedClient = this.GetByClientIdentifier(ClientIdentifier);
+
+                            //    if(ConnectedClient != null)
+                            //    {
+                            //        // Check if the Client is connected
+                            //        if (ConnectedClient.Connected)
+                            //        {
+                            //            // Diconnect 
+                            //            ConnectedClient.Shutdown(SocketShutdown.Both);
+                            //            ConnectedClient.Close();
+                            //            }
+                            //        // Remove from Dictionary
+                            //        this.RemoveClient(ClientIdentifier);
+                            //    }
+
+                            //    // 2. Add new Client
+                            //    try
+                            //    {
+                            //        this.AddClient(((CONN)RecievedFrame).ClientIdentifier, ClientSocket);
+                            //    }
+                            //    catch (Exception ex)
+                            //    {
+                            //        Console.WriteLine(ex.Message);
+                            //    }
+                            //}
+                            Socket ConnectedClient = this.GetByClientIdentifier(ClientIdentifier);
+
+                            if (ConnectedClient != null)
                             {
                                 // ID already connected
-                                this._ConnectedClients[((CONN)RecievedFrame).ClientIdentifier].Shutdown(SocketShutdown.Both);
-                                this._ConnectedClients[((CONN)RecievedFrame).ClientIdentifier].Close();
-                                this._ConnectedClients.Remove(((CONN)RecievedFrame).ClientIdentifier);
-                                ResponseFrame = (CONNACK)ResponseFrameFactory.CreateFrameByReturnCode(ConnectReturnCode.RefusedIdentifierRejected, false);
+                                if (ConnectedClient.Connected)
+                                {
+                                    this.Logger.CreateLogEntry("a Client with the same ID was found", Logger.LogLevel.Warn, true);
+                                    this.Logger.CreateLogEntry("shutting down the Connection", Logger.LogLevel.Info, true);
+                                    this.RemoveClient(ClientIdentifier);
+                                }
+                                
+                                ResponseFrame = (CONNACK)ResponseFrameFactory.CreateFrameByReturnCode(ConnectReturnCode.Accepted, false, this.Logger);
                             }
                             else
                             {
                                 // everything is fine
-                                ResponseFrame = (CONNACK)ResponseFrameFactory.CreateFrameByReturnCode(ConnectReturnCode.Accepted, false);
+                                ResponseFrame = (CONNACK)ResponseFrameFactory.CreateFrameByReturnCode(ConnectReturnCode.Accepted, false, this.Logger);
                             }
                             
                             if(ResponseFrame != null)
@@ -118,12 +183,14 @@ namespace MQTT
                                 }
                                 Console.WriteLine();
 
+                                this.Logger.CreateLogEntry("Sending Responseframe to Client", Logger.LogLevel.Info, true);
                                 ClientSocket.Send(respons, SocketFlags.None);
                             }
 
-                            ClientIdentifier = ((CONN)RecievedFrame).ClientIdentifier;
-                            this._ConnectedClients.Add(ClientIdentifier, ClientSocket);
-                            Console.WriteLine($"Client: {ClientIdentifier} erfolgreich connected");
+                            this.AddClient(ClientIdentifier, ClientSocket);
+                            
+                            this.Logger.CreateLogEntry($"Client: {ClientIdentifier} sucessfully connected", Logger.LogLevel.Info, true);
+                            this.Logger.CreateLogEntry($"Finished Process for CONNECTION-Packets", Logger.LogLevel.Debug, true);
                             break;
                         case Frametype.PUB:
                             Console.WriteLine($"{((PUB)RecievedFrame).TopicName}: {((PUB)RecievedFrame).TopicMessage}");
@@ -147,14 +214,15 @@ namespace MQTT
                             ClientSocket.Send(respons, SocketFlags.None);
                             break;
                         case Frametype.DISCONN:
-                            this._ConnectedClients.Remove(ClientIdentifier);
+                            this.Logger.CreateLogEntry($"Starting Process for DISCONNECTION-Packets", Logger.LogLevel.Debug, true);
                             if (ClientSocket.Connected)
                             {
-                                ClientSocket.Shutdown(SocketShutdown.Both);
-                                ClientSocket.Close();
+                                this.RemoveClient(ClientIdentifier);
+                                ClientDisconnected = true;
                             }
-                            Console.WriteLine($"Client: {ClientIdentifier} erfolgreich disconnected");
+                            this.Logger.CreateLogEntry($"Client: {ClientIdentifier} sucessfully disconnected", Logger.LogLevel.Info, true);
                             ClientIdentifier = "";
+                            this.Logger.CreateLogEntry($"Finished Process for DISCONNECTION-Packets", Logger.LogLevel.Debug, true);
                             break;
                         default:
                             break;
@@ -163,44 +231,89 @@ namespace MQTT
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"Client handling error: {ex.Message}");
+                this.Logger.CreateLogEntry(ex.Message + " [HandleClient()]", Logger.LogLevel.Error, true);
             }
             finally
             {
-                ClientSocket.Shutdown(SocketShutdown.Both);
-                ClientSocket.Close();
+                if(ClientDisconnected == false)
+                {
+                    this.Logger.CreateLogEntry("Shutting down the Connection [HandleClient()]", Logger.LogLevel.Info, true);
+                    ClientSocket.Shutdown(SocketShutdown.Both);
+                    ClientSocket.Close();
+                }
             }
         }
 
+        public bool AddClient(string ClientIdentifier, Socket socket)
+        {
+            lock (this._lock)
+            {
+                if (this._ConnectedClients.ContainsKey(ClientIdentifier))
+                {
+                    this.Logger.CreateLogEntry("Client was not added to the _ConnectedClients Dict", Logger.LogLevel.Warn, true);
+                    return false;
+                }
+                else
+                {
+                    this._ConnectedClients.Add(ClientIdentifier, socket);
+                    this.Logger.CreateLogEntry("Client was added to the _ConnectedClients Dict", Logger.LogLevel.Info, true);
+                    return true;
+                }
+            }
+        }
 
+        public void RemoveClient(string ClientIdentifier)
+        {
+            lock (this._lock)
+            {
+                if (this._ConnectedClients.ContainsKey(ClientIdentifier))
+                {
+                    this.Logger.CreateLogEntry("Shutting down the Connection [RemoveClient()]", Logger.LogLevel.Info, true);
+                    this._ConnectedClients[ClientIdentifier].Shutdown(SocketShutdown.Both);
+                    this._ConnectedClients[ClientIdentifier].Close();
+                    this._ConnectedClients.Remove(ClientIdentifier);
+                }
+            }
+        }
 
+        public Socket GetByClientIdentifier(string ClientIdentifier)
+        {
+            lock (this._lock)
+            {
+                Socket socket;
+                return this._ConnectedClients.TryGetValue(ClientIdentifier, out socket) ? socket : null;
+            }
+        }
         public void Stop()
         {
+            this.Logger.CreateLogEntry($"Starting Process for Stopping the Broker", Logger.LogLevel.Debug, true);
             lock (this._lock)
             {
                 if (!this._running)
                     return;
 
-                Console.Write("Stopping Broker...");
+                this.Logger.CreateLogEntry($"Stopping Broker", Logger.LogLevel.Info, true);
                 this._running = false;
 
                 try
                 {
-                    this._socket.Shutdown(SocketShutdown.Both);
-                    Console.WriteLine("stopped");
+                    if(this._socket.Connected == true)
+                    {
+                        this._socket.Shutdown(SocketShutdown.Both);
+                    }
+                    this.Logger.CreateLogEntry($"Broker Stopped", Logger.LogLevel.Info, true);
                 }
                 catch (SocketException ex)
                 {
-                    Debug.WriteLine($"Socket shutdown error: {ex.Message}");
-                    Console.Write("...error...");
+                    this.Logger.CreateLogEntry($"SocketException: [{ex.Message}]", Logger.LogLevel.Error, true);
                 }
                 finally
                 {
+                    this.Logger.CreateLogEntry($"Shutting Down Brokersocket", Logger.LogLevel.Info, true);
                     this._socket.Close();
-                    this._socket.Dispose();
-                    Console.WriteLine("stopped");
                 }
             }
+            this.Logger.CreateLogEntry($"Finished Process for Stopping the Broker", Logger.LogLevel.Debug, true);
         }
     }
 

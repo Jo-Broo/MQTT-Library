@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Log;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -35,6 +36,12 @@ namespace MQTT
             Frame.ConnectReturnCode = (int)returnCode;
 
             return Frame;
+        }
+
+        public Frame CreateFrameByReturnCode(ConnectReturnCode returnCode, bool SessionPresent, Logger logger)
+        {
+            logger.CreateLogEntry($"Creating CONNACK with Returncode: [{returnCode}]", Logger.LogLevel.Info, true);
+            return this.CreateFrameByReturnCode(returnCode, SessionPresent);
         }
     }
 
