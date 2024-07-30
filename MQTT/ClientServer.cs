@@ -16,7 +16,7 @@ namespace MQTT
         private bool _running;
         public bool IsRunning { get { return _running; } }
 
-        private Dictionary<string, Client> _ConnectedClients;
+        private Dictionary<string, Socket> _ConnectedClients;
 
         private readonly object _lock = new object();
 
@@ -24,7 +24,7 @@ namespace MQTT
         {
             this._socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             this._socket.Bind(new IPEndPoint(ipAddress, Port));
-            this._ConnectedClients = new Dictionary<string, Client>();
+            this._ConnectedClients = new Dictionary<string, Socket>();
         }
 
         public async Task Start()
@@ -61,70 +61,72 @@ namespace MQTT
             }
         }
 
-        private async Task HandleClient(Socket client)
+        private async Task HandleClient(Socket ClientSocket)
         {
             try
             {
-                Client client1 = null;
-                byte[] buffer = new byte[1024];
-                int bytesRead;
+                string ClientIdentifier = "";
+                byte[] FrameBuffer = new byte[1024];
+                byte[] respons;
+                int BytesRead;
 
-                while(this._running && (bytesRead = client.Receive(buffer, SocketFlags.None)) > 0)
+                while(this._running && (BytesRead = ClientSocket.Receive(FrameBuffer, SocketFlags.None)) > 0)
                 {
-                    if (bytesRead == 0)
+                    if (BytesRead == 0)
                     {
-                        break;
+                        throw new Exception("The Client is Disconnected.");
                     }
 
                     // Ausgabe der empfangenen Daten
                     Console.WriteLine("Received data:");
-                    for (int i = 0; i < bytesRead; i++)
+                    for (int i = 0; i < BytesRead; i++)
                     {
-                        Console.Write($"{buffer[i]:X2} ");
+                        Console.Write($"{FrameBuffer[i]:X2} ");
                     }
                     Console.WriteLine("");
 
                     // Verarbeite die empfangenen Daten
-                    var frame_recieved = FrameResolver.Resolve(buffer.Take(bytesRead).ToArray());
-                    Console.WriteLine(frame_recieved.Type.ToString());
+                    var RecievedFrame = FrameResolver.Resolve(FrameBuffer);
+                    Console.WriteLine(RecievedFrame.Type.ToString());
 
-                    switch (frame_recieved.Type)
+                    switch (RecievedFrame.Type)
                     {
                         case Frametype.CONN:
-                            CONNACK frame_send = null;
-                            var factory = new CONNACKFactory();
-                            CONN frame = (CONN)frame_recieved;
-                            if (this._ConnectedClients.ContainsKey(frame.ClientIdentifier))
+                            CONNACK ResponseFrame = null;
+                            var ResponseFrameFactory = new CONNACKFactory();
+                            
+                            if (this._ConnectedClients.ContainsKey(((CONN)RecievedFrame).ClientIdentifier))
                             {
                                 // ID already connected
-                                this._ConnectedClients[frame.ClientIdentifier].Disconnect();
-                                this._ConnectedClients.Remove(frame.ClientIdentifier);
-                                frame_send = (CONNACK)factory.CreateFrameByReturnCode(ConnectReturnCode.RefusedIdentifierRejected, false);
+                                this._ConnectedClients[((CONN)RecievedFrame).ClientIdentifier].Shutdown(SocketShutdown.Both);
+                                this._ConnectedClients[((CONN)RecievedFrame).ClientIdentifier].Close();
+                                this._ConnectedClients.Remove(((CONN)RecievedFrame).ClientIdentifier);
+                                ResponseFrame = (CONNACK)ResponseFrameFactory.CreateFrameByReturnCode(ConnectReturnCode.RefusedIdentifierRejected, false);
                             }
                             else
                             {
                                 // everything is fine
-                                frame_send = (CONNACK)factory.CreateFrameByReturnCode(ConnectReturnCode.Accepted, false);
+                                ResponseFrame = (CONNACK)ResponseFrameFactory.CreateFrameByReturnCode(ConnectReturnCode.Accepted, false);
                             }
                             
-                            if(frame_send != null)
+                            if(ResponseFrame != null)
                             {
-                                byte[] respons = frame_send.GetBytes();
+                                respons = ResponseFrame.GetBytes();
                                 foreach (byte b in respons)
                                 {
                                     Console.Write($"{b:X2} ");
                                 }
                                 Console.WriteLine();
 
-                                client.Send(respons, SocketFlags.None);
+                                ClientSocket.Send(respons, SocketFlags.None);
                             }
 
-                            client1 = new Client(frame.ClientIdentifier, client);
-                            this._ConnectedClients.Add(client1.ID, client1);
-                            Console.WriteLine($"Client: {client1.ID} erfolgreich connected");
+                            ClientIdentifier = ((CONN)RecievedFrame).ClientIdentifier;
+                            this._ConnectedClients.Add(ClientIdentifier, ClientSocket);
+                            Console.WriteLine($"Client: {ClientIdentifier} erfolgreich connected");
                             break;
                         case Frametype.PUB:
-                            Console.WriteLine("Packet not supported");
+                            Console.WriteLine($"{((PUB)RecievedFrame).TopicName}: {((PUB)RecievedFrame).TopicMessage}");
                             break;
                         case Frametype.SUB:
                             Console.WriteLine("Packet not supported");
@@ -133,13 +135,26 @@ namespace MQTT
                             Console.WriteLine("Packet not supported");
                             break;
                         case Frametype.PINGREQ:
-                            Console.WriteLine("Packet not supported");
+                            PINGRES PingRespond = null;
+                            PINGRESFactory PingRespondFactory = new PINGRESFactory();
+                            PingRespond = (PINGRES)PingRespondFactory.CreateFrame();
+                            respons = PingRespond.GetBytes();
+                            foreach (byte b in respons)
+                            {
+                                Console.Write($"{b:X2} ");
+                            }
+                            Console.WriteLine();
+                            ClientSocket.Send(respons, SocketFlags.None);
                             break;
                         case Frametype.DISCONN:
-                            string ID = client1.ID;
-                            this._ConnectedClients.Remove(client1.ID);
-                            client1.Disconnect();
-                            Console.WriteLine($"Client: {ID} erfolgreich disconnected");
+                            this._ConnectedClients.Remove(ClientIdentifier);
+                            if (ClientSocket.Connected)
+                            {
+                                ClientSocket.Shutdown(SocketShutdown.Both);
+                                ClientSocket.Close();
+                            }
+                            Console.WriteLine($"Client: {ClientIdentifier} erfolgreich disconnected");
+                            ClientIdentifier = "";
                             break;
                         default:
                             break;
@@ -152,8 +167,8 @@ namespace MQTT
             }
             finally
             {
-                client.Shutdown(SocketShutdown.Both);
-                client.Close();
+                ClientSocket.Shutdown(SocketShutdown.Both);
+                ClientSocket.Close();
             }
         }
 

@@ -122,7 +122,11 @@ namespace MQTT
     {
         public override Frame CreateFrame()
         {
-            return new PINGRES();
+            PINGRES Frame = new PINGRES();
+            Frame.Type = Frametype.PINGRESP;
+            Frame.remainingLength = 0;
+
+            return Frame;   
         }
     }
 
